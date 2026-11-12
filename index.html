@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Навигация НовГУ — MVP</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 16px; background: #f4f4f9; }
+    canvas { background: #fff; border: 1px solid #ccc; width: 100%; max-width: 400px; display: block; margin: 12px 0; }
+    .controls { display: flex; flex-direction: column; gap: 8px; max-width: 400px; }
+    button, select { padding: 10px; font-size: 16px; }
+    .status { font-size: 14px; color: #333; background: #e9ecef; padding: 8px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <h3>Навигатор (Прототип этажа)</h3>
+  
+  <div class="controls">
+    <select id="targetRoom">
+      <option value="aud_105">Куда идем: Ауд. 105</option>
+      <option value="stairs_1">Куда идем: Лестница на 2 этаж</option>
+    </select>
+    <button id="startSensorsBtn">1. Включить датчики (Шаги / Компас)</button>
+    <button id="calibrateBtn">2. Сбросить позицию по табличке «Ауд. 105»</button>
+  </div>
+
+  <canvas id="mapCanvas" width="300" height="300"></canvas>
+  <div class="status" id="statusLog">Ожидание запуска датчиков...</div>
+
+  <script>
+    // Граф этажа (координаты в условных единицах карты)
+    const nodes = {
+      entry_main: { x: 40, y: 260, label: 'Вход (QR)' },
+      hall_1:     { x: 40, y: 140, label: 'Холл' },
+      aud_105:    { x: 150, y: 140, label: 'Ауд. 105' },
+      stairs_1:   { x: 260, y: 140, label: 'Лестница' }
+    };
+
+    // Текущая позиция пользователя (старт от входного QR-кода)
+    let userPos = { x: 40, y: 260, heading: 0, steps: 0 };
+    const STEP_LENGTH_PX = 8; // Масштаб одного шага на карте
+
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusLog = document.getElementById('statusLog');
+
+    function drawMap() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Отрисовка коридоров (ребер графа)
+      ctx.strokeStyle = '#bbb';
+      ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.moveTo(nodes.entry_main.x, nodes.entry_main.y);
+      ctx.lineTo(nodes.hall_1.x, nodes.hall_1.y);
+      ctx.lineTo(nodes.stairs_1.x, nodes.stairs_1.y);
+      ctx.stroke();
+
+      // Отрисовка точек (узлов)
+      Object.values(nodes).forEach(node => {
+        ctx.fillStyle = '#4a148c';
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(node.label, node.x + 10, node.y + 4);
+      });
+
+      // Отрисовка пользователя
+      ctx.fillStyle = '#e53935';
+      ctx.beginPath();
+      ctx.arc(userPos.x, userPos.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Детектор шагов по акселерометру (базовый пороговый алгоритм)
+    let lastAccel = 0;
+    let stepCooldown = false;
+
+    function handleMotion(event) {
+      const acc = event.accelerationIncludingGravity;
+      if (!acc) return;
+      const magnitude = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+      const delta = Math.abs(magnitude - lastAccel);
+      lastAccel = magnitude;
+
+      if (delta > 3.2 && !stepCooldown) {
+        userPos.steps++;
+        stepCooldown = true;
+        setTimeout(() => stepCooldown = false, 350); // Защита от двойного срабатывания
+
+        // Смещение точки с учетом текущего угла поворота
+        const rad = (userPos.heading * Math.PI) / 180;
+        userPos.x += Math.sin(rad) * STEP_LENGTH_PX;
+        userPos.y -= Math.cos(rad) * STEP_LENGTH_PX;
+
+        updateStatus();
+        drawMap();
+      }
+    }
+
+    // Определение угла поворота (компас / гироскоп)
+    function handleOrientation(event) {
+      if (event.alpha !== null) {
+        userPos.heading = Math.round(360 - event.alpha);
+        updateStatus();
+      }
+    }
+
+    function updateStatus() {
+      statusLog.innerText = `Шагов: ${userPos.steps} | Азимут: ${userPos.heading}° | Координаты: (${Math.round(userPos.x)}, ${Math.round(userPos.y)})`;
+    }
+
+    // Запуск датчиков (для iOS требуется явное разрешение по клику)
+    document.getElementById('startSensorsBtn').addEventListener('click', async () => {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        await DeviceMotionEvent.requestPermission();
+      }
+      window.addEventListener('devicemotion', handleMotion);
+      window.addEventListener('deviceorientation', handleOrientation);
+      statusLog.innerText = 'Датчики активны. Начните идти со смартфоном в руке.';
+    });
+
+    // Сброс погрешности при наведении камеры на табличку (имитация работы CV-модуля)
+    document.getElementById('calibrateBtn').addEventListener('click', () => {
+      userPos.x = nodes.aud_105.x;
+      userPos.y = nodes.aud_105.y;
+      updateStatus();
+      drawMap();
+      alert('Позиция откалибрована по табличке Ауд. 105!');
+    });
+
+    drawMap();
+  </script>
+</body>
+</html>
